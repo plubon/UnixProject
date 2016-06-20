@@ -3,6 +3,11 @@
 volatile sig_atomic_t dowork=1;
 
 void lockTwoFiles(thread_arg targ, char* path1, char* path2)
+/*
+ * locks two files by locking (and creating if needed and adding them to the list if needed)
+ * mutexes corresponding to them in alphabetical order
+ * used for locking calendars
+ */
 {
     pthread_mutex_lock(targ.fileListMutex);
     mtxList* first = NULL;
@@ -56,6 +61,9 @@ void lockTwoFiles(thread_arg targ, char* path1, char* path2)
 }
 
 void unlockTwoFiles(thread_arg targ, char* path1, char* path2)
+/*
+ * unlocks two files
+ */
 {
     mtxList* first = NULL;
     mtxList* second = NULL;
@@ -81,6 +89,9 @@ void unlockTwoFiles(thread_arg targ, char* path1, char* path2)
 }
 
 void lockFile(thread_arg targ, char* path)
+/*
+ *
+ */
 {
     pthread_mutex_lock(targ.fileListMutex);
     mtxList *curr = targ.fileList;
@@ -109,7 +120,9 @@ void lockFile(thread_arg targ, char* path)
     curr->next = new;
     pthread_mutex_unlock(targ.fileListMutex);
 }
-
+/*
+ * locks a file by locking (and creating and adding it to the list if needed) af mutex corersponding to it
+ */
 void unlockFile(thread_arg targ, char* path)
 {
     pthread_mutex_lock(targ.fileListMutex);
@@ -128,6 +141,10 @@ void unlockFile(thread_arg targ, char* path)
     pthread_mutex_unlock(targ.fileListMutex);
 }
 
+
+/*
+ * checks if user exists and provided password is correct
+ */
 int validateLoginInfo(char* file, char* login, char* pwd)
 {
     char *saveptr;
@@ -135,42 +152,25 @@ int validateLoginInfo(char* file, char* login, char* pwd)
     line = strtok_r(file, "\n", &saveptr);
     while(line != NULL)
     {
-        int index = strcspn(line, ";");
-        int loginOk = 1;
-        int i =0 ;
-        while(i<index && login[i]!='\r' && login[i]!='\0')
-        {
-            if(line[i]!=login[i])
-            {
-                loginOk = 0;
-                break;
-            }
-            i++;
-        }
-        if(loginOk)
-        {
-            int pwdOk=1;
-            i=0;
-            while(line[i+index+1]!='\0' && line[i+index+1]!='\n' && pwd[i]!='\r' && pwd[i]!='\0')
-            {
-                if(line[i+index+1]!=pwd[i])
-                {
-                    pwdOk = 0;
-                    break;
-                }
-                i++;
-            }
-            if(pwdOk)
-                return 1;
-        }
+        char* rest;
+        char* oldLogin;
+        oldLogin = strtok_r(line, ";", &rest);
+        if(strcmp(login, oldLogin) == 0 && strcmp(pwd, rest) == 0)
+            return 1;
         line = strtok_r(NULL, "\n", &saveptr);
     }
     return 0;
 }
 
+/*
+ * updates profile file based on input from user
+ * fields in the file are tab separated, each user has his own file
+ */
 void updateProfileFile(char* path, int no, char* value, thread_arg targ)
 {
     char *values[6] = {"|", "|", "|", "|", "|", "|"};
+    int existed = 0;
+    volatile void* toRemove;
     if(fileExists(path)) {
         struct aiocb aios;
         lockFile(targ, path);
@@ -187,7 +187,8 @@ void updateProfileFile(char* path, int no, char* value, thread_arg targ)
             i++;
             val = strtok_r(NULL, "\t", &saveptr);
         }
-        //disposeAiocb(&aios);
+        existed = 1;
+        toRemove = aios.aio_buf;
     }
     values[no - 1] = value;
     char buffer[4096];
@@ -197,7 +198,8 @@ void updateProfileFile(char* path, int no, char* value, thread_arg targ)
     setAiocbWrite(&aios, buffer, path);
     waitAiocb(&aios);
     unlockFile(targ, path);
-        //disposeAiocb(&aios);
+    if(existed)
+        free((void*)toRemove);
 }
 
 void setProfile(thread_arg targ, char* username, char* args)
@@ -211,7 +213,7 @@ void setProfile(thread_arg targ, char* username, char* args)
     char *saveptr;
     char *strNo;
     strNo = strtok_r(args, " ", &saveptr);
-    int no = atoi(strNo);
+    int no = getIntForFieldName(strNo);
     if(no > 6 || no < 1)
         argsOk = 0;
     if(argsOk) {
@@ -226,9 +228,12 @@ void setProfile(thread_arg targ, char* username, char* args)
     }
 }
 
+/*
+ * prints given users profile to telnet
+ */
 void printProfile(char* path, int fd, char* username, thread_arg targ)
 {
-    char** names = (char *[]){"1","2","3","4","5","6"};
+    char** names = (char *[]){"Age","Sex","Location","Job","Height","Other"};
     struct aiocb aios;
     lockFile(targ, path);
     setAiocbRead(&aios, path);
@@ -255,6 +260,7 @@ void printProfile(char* path, int fd, char* username, thread_arg targ)
         line = strtok_r(NULL, "\t", &saveptr);
         i++;
     }
+    disposeAiocb(&aios);
 }
 
 void showProfile(thread_arg targ, char* username)
@@ -274,6 +280,9 @@ void showProfile(thread_arg targ, char* username)
     }
 }
 
+/*
+ * prints all profiles to telnet by iterating over files in profile directory
+ */
 void showAllProfiles(thread_arg targ)
 {
     struct dirent *dp;
@@ -282,6 +291,8 @@ void showAllProfiles(thread_arg targ)
     getcwd(wd, 1024);
     char path[1024];
     sprintf(path, "%s/storage/profiles", wd);
+    if(0 >= bulk_write(targ.socketFd, "All profiles:\n", sizeof("All profiles:\n")))
+        ERR("Write error");
     if (NULL == (dirp = opendir(path)))
         ERR("opening dir");
     do {
@@ -309,6 +320,9 @@ void viewProfile(thread_arg targ, char* username, char* args)
         showProfile(targ, saveptr);
 }
 
+/*
+ * checks if profile mathces conditions given by find command
+ */
 int checkProfile(char* username, int n, char* value, thread_arg targ)
 {
     char path[1024];
@@ -329,20 +343,31 @@ int checkProfile(char* username, int n, char* value, thread_arg targ)
         if(i == n-1)
         {
             if(strcmp(line, value) == 0)
+            {
+                disposeAiocb(&aios);
                 return 1;
+            }
             else
+            {
+                disposeAiocb(&aios);
                 return 0;
+            }
         }
         line = strtok_r(NULL, "\t", &saveptr);
         i++;
     }
+    disposeAiocb(&aios);
+    return 0;
 }
 
+/*
+ * iterates over all profiles to find ones that match given condition
+ */
 void findProfile(thread_arg targ, char* username, char* args)
 {
     char *saveptr;
     char* no = strtok_r(args, " ", &saveptr);
-    int n = atoi(no);
+    int n = getIntForFieldName(no);
     if(n<0 || n>6)
     {
         if(0 >= bulk_write(targ.socketFd, "invalid command\n", sizeof("invalid command\n")))
@@ -350,6 +375,8 @@ void findProfile(thread_arg targ, char* username, char* args)
     }
     else
     {
+        if(0 >= bulk_write(targ.socketFd, "Matching profiles:\n", sizeof("Matching profiles:\n")))
+            ERR("Write error");
         struct dirent *dp;
         DIR *dirp = NULL;
         char wd[1024];
@@ -377,6 +404,9 @@ void findProfile(thread_arg targ, char* username, char* args)
     }
 }
 
+/*
+ * searches for fd corresponding to username in the list of active connections
+ */
 int findFdInList(listNode* head, char* username)
 {
     while(head!=NULL)
@@ -388,15 +418,20 @@ int findFdInList(listNode* head, char* username)
     return -1;
 }
 
+/*
+ * invites a user
+ * notification is send to other user if hes online
+ * invitation is sent in a file
+ */
 void inviteProfile(thread_arg targ, char* username, char* args)
 {
     pthread_mutex_lock(targ.listMutex);
     int fd = findFdInList(targ.head, args);
-    pthread_mutex_unlock(targ.listMutex);
     if(fd > 0) {
         if (0 >= bulk_write(fd, "You have pending invites\n", strlen("You have pending invites\n")))
             ERR("Write error");
     }
+    pthread_mutex_unlock(targ.listMutex);
     struct aiocb aios;
     char buffer[1024];
     char path[1024];
@@ -408,8 +443,13 @@ void inviteProfile(thread_arg targ, char* username, char* args)
     setAiocbAppend(&aios, buffer, path);
     waitAiocb(&aios);
     unlockFile(targ, path);
+    if (0 >= bulk_write(targ.socketFd, "Successfully invited!\n", strlen("Successfully invited!\n")))
+        ERR("Write error");
 }
 
+/*
+ * reads calendar of user form file
+ */
 void getCalendar(char* calendar, char* path)
 {
     if(fileExists(path)) {
@@ -419,6 +459,7 @@ void getCalendar(char* calendar, char* path)
         char* buf = (char*)aios.aio_buf;
         for(int i=0; i<21; i++)
             calendar[i]=buf[i];
+        disposeAiocb(&aios);
     }
     else
     {
@@ -434,6 +475,9 @@ void getCalendar(char* calendar, char* path)
     }
 }
 
+/*
+ * finds intersection of free dates of two calendars
+ */
 void printIntersection(thread_arg targ, char* cal1, char* cal2)
 {
     char result[21];
@@ -466,6 +510,9 @@ int getNoOfDay(char* line)
     return -1;
 }
 
+/*
+ * updates two calendars after scheduling a date
+ */
 int updateCalendars(char* username, char* cal1, char* usr2, char* cal2, char* time)
 {
     char *saveptr;
@@ -499,6 +546,11 @@ int updateCalendars(char* username, char* cal1, char* usr2, char* cal2, char* ti
         return 0;
 }
 
+/*
+ * removes an accpeted invite from file
+ * each user has his own file for storing invites
+ * if there are no more invites the file is deleted
+ */
 void removeInvite(thread_arg targ, char* username, char* toRemove)
 {
     struct aiocb aios;
@@ -520,17 +572,18 @@ void removeInvite(thread_arg targ, char* username, char* toRemove)
         {
             if(i==0)
             {
-                struct aiocb aios;
+                struct aiocb aios1;
                 lockFile(targ, path);
-                setAiocbWrite(&aios, line, path);
-                waitAiocb(&aios);
+                setAiocbWrite(&aios1, line, path);
+                waitAiocb(&aios1);
                 unlockFile(targ, path);
             }
             else
             {
+                struct aiocb aios1;
                 lockFile(targ, path);
-                setAiocbAppend(&aios, line, path);
-                waitAiocb(&aios);
+                setAiocbAppend(&aios1, line, path);
+                waitAiocb(&aios1);
                 unlockFile(targ, path);
             }
             i++;
@@ -541,6 +594,7 @@ void removeInvite(thread_arg targ, char* username, char* toRemove)
     {
         remove(path);
     }
+    disposeAiocb(&aios);
 }
 
 void scheduleDate(thread_arg targ, char* username, char* args)
@@ -571,12 +625,42 @@ void scheduleDate(thread_arg targ, char* username, char* args)
     while(!updateCalendars(username, cal1, line, cal2, line1)) {
         if (0 >= bulk_write(targ.socketFd, "Provided date is taken\n", strlen("Provided date is taken\n")))
             ERR("Write error");
-        while (read_line(targ.socketFd, line, 1024) <= 0);
+        while (read_line(targ.socketFd, line1, 1024) <= 0);
     }
     removeInvite(targ, username, line);
     unlockTwoFiles(targ, path, path1);
+    disposeAiocb(&aios);
+    if (0 >= bulk_write(targ.socketFd, "Successfully scheduled\n", strlen("Successfully scheduled\n")))
+        ERR("Write error");
 }
 
+/*
+ * removes entry for logged off user from list of users that are online
+ */
+void removeFromList(listNode* head, char* username)
+{
+    while((head->next != NULL)  && (strcmp(head->next->username, username) !=0))
+        head=head->next;
+    if(head->next != NULL)
+    {
+        listNode* toRemove = head -> next;
+        head->next = head->next->next;
+        free(toRemove);
+    }
+}
+
+void logOff(thread_arg targ, char* username, char* args)
+{
+    pthread_mutex_lock(targ.listMutex);
+    removeFromList(targ.head, username);
+    close(targ.socketFd);
+    pthread_mutex_unlock(targ.listMutex);
+}
+
+/*
+ * waits for commands entered by logged in user
+ * calls correct handling fuction for each command
+ */
 void handleCommands(thread_arg targ, char* username)
 {
     int doWork = 1;
@@ -600,6 +684,11 @@ void handleCommands(thread_arg targ, char* username)
             inviteProfile(targ, username, saveptr);
         else if(strcmp(token, "schedule") == 0)
             scheduleDate(targ, username, saveptr);
+        else if(strcmp(token, "quit") == 0) {
+
+            logOff(targ, username, saveptr);
+            doWork = 0;
+        }
         else {
             if (0 >= bulk_write(clientFd, "invalid command\n", sizeof("invalid command\n")))
                 ERR("Write error");
@@ -608,6 +697,9 @@ void handleCommands(thread_arg targ, char* username)
 
 }
 
+/*
+ * adds entry to the list of online users
+ */
 void appendToList(listNode* head, int fd, char* username)
 {
     listNode* current = head;
@@ -620,6 +712,9 @@ void appendToList(listNode* head, int fd, char* username)
     current->next = new;
 }
 
+/*
+ * checks if user have any pending invites by checking if file with invites for this user exists
+ */
 void checkInvites(thread_arg targ, char* username)
 {
     char path[1024];
@@ -633,6 +728,10 @@ void checkInvites(thread_arg targ, char* username)
     }
 }
 
+/*
+ * checks if not provided login exists(returns 0 if it does)
+ * if it does not creates a new user
+ */
 int validateRegisterInfo(char* file, char* login, char* pwd, thread_arg targ)
 {
     char *saveptr;
@@ -653,7 +752,7 @@ int validateRegisterInfo(char* file, char* login, char* pwd, thread_arg targ)
     sprintf(path, "%s/storage/pwd", wd);
     lockFile(targ, path);
     struct aiocb aios;
-    char* buffer[1024];
+    char buffer[1024];
     memset(buffer, '\0', 1024);
     sprintf(buffer, "%s;%s\n", login, pwd);
     setAiocbAppend(&aios, buffer, path);
@@ -686,10 +785,16 @@ void registerUser(thread_arg targ)
     while (read_line(clientFd, pwdBuffer, 1024) <= 0);
     waitAiocb(&aios);
     unlockFile(targ, path);
-    while (!validateRegisterInfo((char *) aios.aio_buf, loginBuffer, pwdBuffer, targ))
+    while (!validateRegisterInfo((char*)aios.aio_buf, loginBuffer, pwdBuffer, targ))
     {
         if(0>=bulk_write(clientFd, "This username is taken\n", strlen("This username is taken\n")))
             ERR("Write error");
+        if (0 >= bulk_write(clientFd, msg, 7))
+            ERR("Write error");
+        while (read_line(clientFd, loginBuffer, 1024) <= 0);
+        if (0 >= bulk_write(clientFd, msg1, 10))
+            ERR("Write error");
+        while (read_line(clientFd, pwdBuffer, 1024) <= 0);
     }
     disposeAiocb(&aios);
     pthread_mutex_lock(targ.listMutex);
@@ -699,6 +804,9 @@ void registerUser(thread_arg targ)
     handleCommands(targ, loginBuffer);
 }
 
+/*
+ * entry function for threads when accepting new connection
+ */
 void *readingThreadFunc(void *arg)
 {
     thread_arg targ;
@@ -708,46 +816,49 @@ void *readingThreadFunc(void *arg)
         ERR("Write error");
     char command[1024];
     while(read_line(clientFd, command, 1024)<=0);
-    if(command[0]=='L' && command[0]=='l') {
-        char loginBuffer[1024];
-        char pwdBuffer[1024];
-        memset(loginBuffer, '\0', 1024);
-        memset(pwdBuffer, '\0', 1024);
-        memcpy(&targ, arg, sizeof(targ));
-        char msg[] = "login:\n";
-        if (0 >= bulk_write(clientFd, msg, 7))
-            ERR("Write error");
-        struct aiocb aios;
-        char wd[1024];
-        getcwd(wd, 1024);
-        char path[1024];
-        sprintf(path, "%s/storage/pwd", wd);
-        lockFile(targ, path);
-        getLoginInfo(&aios);
-        while (read_line(clientFd, loginBuffer, 1024) <= 0);
-        char msg1[] = "password:\n";
-        if (0 >= bulk_write(clientFd, msg1, 10))
-            ERR("Write error");
-        while (read_line(clientFd, pwdBuffer, 1024) <= 0);
-        waitAiocb(&aios);
-        unlockFile(targ, path);
-        if (validateLoginInfo((char *) aios.aio_buf, loginBuffer, pwdBuffer)) {
-            disposeAiocb(&aios);
-            pthread_mutex_lock(targ.listMutex);
-            appendToList(targ.head, clientFd, loginBuffer);
-            pthread_mutex_unlock(targ.listMutex);
-            checkInvites(targ, loginBuffer);
-            handleCommands(targ, loginBuffer);
-        }
-        else {
-            disposeAiocb(&aios);
-            if (0 >= bulk_write(clientFd, "invalid credentials\n", sizeof("invalid credentials\n")));
-            ERR("Write error");
+    if(command[0]=='L' || command[0]=='l') {
+        int logged = 0;
+        while(!logged) {
+            char loginBuffer[1024];
+            char pwdBuffer[1024];
+            memset(loginBuffer, '\0', 1024);
+            memset(pwdBuffer, '\0', 1024);
+            memcpy(&targ, arg, sizeof(targ));
+            char msg[] = "login:\n";
+            if (0 >= bulk_write(clientFd, msg, 7))
+                ERR("Write error");
+            struct aiocb aios;
+            char wd[1024];
+            getcwd(wd, 1024);
+            char path[1024];
+            sprintf(path, "%s/storage/pwd", wd);
+            lockFile(targ, path);
+            getLoginInfo(&aios);
+            while (read_line(clientFd, loginBuffer, 1024) <= 0);
+            char msg1[] = "password:\n";
+            if (0 >= bulk_write(clientFd, msg1, 10))
+                ERR("Write error");
+            while (read_line(clientFd, pwdBuffer, 1024) <= 0);
+            waitAiocb(&aios);
+            unlockFile(targ, path);
+            if (validateLoginInfo((char *) aios.aio_buf, loginBuffer, pwdBuffer)) {
+                logged = 1;
+                disposeAiocb(&aios);
+                pthread_mutex_lock(targ.listMutex);
+                appendToList(targ.head, clientFd, loginBuffer);
+                pthread_mutex_unlock(targ.listMutex);
+                checkInvites(targ, loginBuffer);
+                handleCommands(targ, loginBuffer);
+            }
+            else {
+                disposeAiocb(&aios);
+                bulk_write(clientFd, "invalid credentials\n", sizeof("invalid credentials\n"));
+            }
         }
     }
     else
         registerUser(targ);
-    //close(clientFd);
+    return 0;
 }
 
 void initThread(pthread_t *thread, int socketFd, thread_arg *targ, int no, pthread_mutex_t* mtx, listNode* head, pthread_mutex_t* mtx1, mtxList* lst)
@@ -759,6 +870,7 @@ void initThread(pthread_t *thread, int socketFd, thread_arg *targ, int no, pthre
     targ[no].fileList=lst;
     if(pthread_create(thread, NULL, readingThreadFunc, (void *) &targ[no]) != 0)
         ERR("pthread_create");
+    pthread_detach(*thread);
 }
 
 int main(int argc, char **argv)

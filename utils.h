@@ -27,19 +27,31 @@
 		     exit(0))
 
 #define BACKLOG 3
-
+/*
+ * list of all logged in users and fd to sockets that they connected to
+ * used for sending real time notifications
+ */
 typedef struct node {
 	int val;
 	struct node * next;
 	char* username;
 } listNode;
 
+/*
+ * list of mutexes locking access to files
+ * when thread tries to lock file it looks for entry with corresponding path in this list
+ * if it does not exist it adds it
+ * the in tries to lock the mutex
+ */
 typedef struct _tempNode{
 	char* path;
 	pthread_mutex_t* mutex;
 	struct _tempNode* next;
 } mtxList;
 
+/*
+ * mutexes are used for synchronizing access to the lists
+ */
 typedef struct
 {
     int socketFd;
@@ -49,6 +61,19 @@ typedef struct
 	pthread_mutex_t* fileListMutex;
 } thread_arg;
 
-
-
+off_t getfilelength(int);
+int fileExists(char*);
+void setAiocbRead(struct aiocb*, char*);
+void setAiocbAppend(struct aiocb*, char*, char*);
+void setAiocbWrite(struct aiocb*, char*, char*);
+void waitAiocb(struct aiocb*);
+void disposeAiocb(struct aiocb*);
+ssize_t read_line(int, char*, size_t);
+ssize_t bulk_write(int, char*, size_t);
+void getLoginInfo(struct aiocb*);
+int add_new_client(int);
+int make_socketServ(int, int);
+int bind_inet_socket(uint16_t);
+struct sockaddr_in make_address(char*, uint16_t);
+int getIntForFieldName(char*);
 #endif //UNIXPROJECT_UTILS_H

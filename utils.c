@@ -19,51 +19,23 @@ int fileExists(char* path)
     }
 }
 
-char* concat(char *s1, char *s2)
-{
-    char *result = malloc(strlen(s1)+strlen(s2)+1);
-    if (result == NULL)
-        ERR("malloc");
-    strcpy(result, s1);
-    strcat(result, s2);
-    return result;
-}
-
-ssize_t bulk_read(int fd, char *buf, size_t count)
-{
-    int c;
-    size_t len = 0;
-
-    do
-    {
-        c = TEMP_FAILURE_RETRY(read(fd, buf, count));
-        if (c < 0)
-            return c;
-        if (c == 0)
-            return len;
-        buf += c;
-        len += c;
-        count -= c;
-    }
-    while (count > 0);
-
-    return len;
-}
-
 void setAiocbRead(struct aiocb *aios, char* path)
+/*
+ * prepare Aiocb struct for reading entire file pointed to by path variable and starts reading
+ * buffer is allocated dynamically and must be freed using disposeAiocb function
+ */
 {
     memset(aios, 0, sizeof(struct aiocb));
     int fd = open(path, O_RDONLY, S_IRUSR|S_IWUSR);
     if(fd < 0)
     {
-        printf(path);
         ERR("pwdFd");
     }
     off_t filesize =  getfilelength(fd);
     aios->aio_fildes = fd;
     aios->aio_offset = 0;
     char* buffer = (char*)malloc(filesize+1);
-    memset(buffer, '\0', sizeof(buffer));
+    memset(buffer, '\0', filesize+1);
     aios->aio_buf = buffer;
     aios->aio_nbytes = filesize;
     aios->aio_lio_opcode = LIO_READ;
@@ -81,12 +53,15 @@ void setAiocbRead(struct aiocb *aios, char* path)
 }
 
 void setAiocbAppend(struct aiocb *aios, char* buffer, char* path)
+/*
+ * appends buffer to the end of file pointed by path
+ * file is created if it doesnt exist
+ */
 {
     memset(aios, 0, sizeof(struct aiocb));
     int fd = open(path, O_WRONLY|O_CREAT|O_APPEND, S_IRUSR|S_IWUSR);
     if(fd < 0)
         ERR("pwdFd");
-    //ERR("pwdFd");
     aios->aio_fildes = fd;
     aios->aio_offset = 0;
     aios->aio_buf = buffer;
@@ -106,14 +81,16 @@ void setAiocbAppend(struct aiocb *aios, char* buffer, char* path)
 }
 
 void setAiocbWrite(struct aiocb *aios, char* buffer, char* path)
+/*
+ * replaces contents of file pointed to by path by the contents of buffer
+ * file is created if it doesnt exist
+ */
 {
     memset(aios, 0, sizeof(struct aiocb));
     int fd = open(path, O_WRONLY|O_CREAT| O_TRUNC, S_IRUSR|S_IWUSR);
     if(fd < 0) {
-        printf(path);
         ERR("pwdFd");
     }
-    //ERR("pwdFd");
     aios->aio_fildes = fd;
     aios->aio_offset = 0;
     aios->aio_buf = buffer;
@@ -133,6 +110,9 @@ void setAiocbWrite(struct aiocb *aios, char* buffer, char* path)
 }
 
 void waitAiocb(struct aiocb *aios)
+/*
+ * waits for completion of operation scheduled using aios
+ */
 {
     const struct aiocb* constArr[1] = {aios};
     while(aio_suspend(constArr, 1, NULL)!=0);
@@ -144,11 +124,34 @@ void waitAiocb(struct aiocb *aios)
 }
 
 void disposeAiocb(struct aiocb *aios)
+/*
+ * frees memory dynamically allocated by setAiocbRead
+ * functions used for writing do not allocate dynamic memory and this function must not be called
+ * for aios used for scheduling writing operations
+ */
 {
     free((void*)(aios->aio_buf));
 }
 
+int getIntForFieldName(char* field)
+{
+    if(strcasecmp(field, "age") == 0 )
+        return 1;
+    if(strcasecmp(field, "sex") == 0 )
+        return 2;
+    if(strcasecmp(field, "location") == 0 )
+        return 3;
+    if(strcasecmp(field, "job") == 0 )
+        return 4;
+    if(strcasecmp(field, "height") == 0 )
+        return 5;
+   return 6;
+}
+
 ssize_t read_line(int fd, char *buf, size_t count)
+/*
+ * reads one line inputted by user into telnet
+ */
 {
     int c;
     int finished = 0;
@@ -197,6 +200,9 @@ ssize_t bulk_write(int fd, char *buf, size_t count)
 }
 
 void getLoginInfo(struct aiocb *aios)
+/*
+ * reads file with login info into aiocb uffer
+ */
 {
     char buf[1024];
     getcwd(buf, 1024);
@@ -206,7 +212,9 @@ void getLoginInfo(struct aiocb *aios)
 }
 
 int add_new_client(int sfd){
-//accept connection equivalent
+/*
+ * accepts new connection and returns fd to the socket
+ */
     int nfd;
     if((nfd=TEMP_FAILURE_RETRY(accept(sfd,NULL,NULL)))<0) {
         if(EAGAIN==errno||EWOULDBLOCK==errno) return -1;
